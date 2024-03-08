@@ -14,7 +14,7 @@ import topography
 import viewfactor
 import illumination
 
-plt.style.use("signature.mplstyle")
+plt.style.use("Plots/signature.mplstyle")
 
 # ---------------------------------------------------------------------------- #
 #                                Site parameters                               #
