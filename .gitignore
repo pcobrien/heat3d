@@ -1,0 +1,14 @@
+.DS_STORE
+__pycache__/
+*.IMG
+*.img
+*.tif 
+*.npy
+*.ply
+*.bsp
+*.tm
+*.tls
+*.tf 
+*.bpc
+*.cmt
+*.tpc
