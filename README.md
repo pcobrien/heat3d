@@ -53,7 +53,8 @@ Illumination files will be stored here.
 SPICE kernels will be stored here. 
 
 There should be a metakernel file, *kernels.tm* which contains the following:
-    
+
+```
 \begindata
 
 KERNELS_TO_LOAD = ( 'kernels/de440.bsp',
@@ -79,7 +80,8 @@ KERNELS_TO_LOAD = ( 'kernels/de440.bsp',
 					)
 
 \begintext
-    
+```
+
 ### Mesh
 Mesh files will be stored here (.ply). User-provided mesh files can also be stored here and accessed directly from heat3d.py.
 
