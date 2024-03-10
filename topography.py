@@ -69,12 +69,13 @@ def findMeshCenter(mesh):
     return center
 
 
-def plot_mesh(mesh, mesh_center, vec2pole):
+def plot_mesh(mesh, mesh_center, vec2pole=None):
     # Basic mesh visualization
     pole = pv.Arrow([mesh_center[0], mesh_center[1], mesh_center[2] + 10000.0], [vec2pole[0], vec2pole[1], 0.0], scale=10000.0)
     plotter = pv.Plotter()
     plotter.add_mesh(mesh)
-    plotter.add_mesh(pole, color="black")
+    if vec2pole:
+        plotter.add_mesh(pole, color="black")
     plotter.view_xy()
     plotter.show()
 

@@ -7,7 +7,6 @@ import spiceypy as spice
 import sys
 from scipy.sparse import load_npz
 import pyvista as pv 
-import pyembree 
 
 from planets import Planet
 import config 
@@ -30,10 +29,15 @@ resolution = 240.0
 # ---------------------------------------------------------------------------- #
 
 fname_mesh = "Mesh/" + "mesh_" + '_'.join(site.split(' ')) + "_{}M".format(int(resolution)) + ".ply"
+
+# Load mesh
 mesh, center_lon_rad, center_lat_rad, mesh_center, vec2pole = topography.load_mesh(fname_mesh=fname_mesh, site=site, planet=planet)
+
+# Create mesh
 #mesh, center_lon_rad, center_lat_rad, mesh_center, vec2pole = topography.createMeshfromDEM(site=site, resolution=resolution, planet=planet)
-#mesh.plot_normals(mag=1000.0, use_every=100)
-#topography.plot_mesh(mesh, mesh_center, vec2pole)
+
+#mesh.plot_normals(mag=1000.0, use_every=100)   # Check that mesh normls are pointing upwards
+#topography.plot_mesh(mesh, mesh_center, vec2pole)      # Visualize mesh
 #sys.exit()
 
 # Number of mesh facets
@@ -55,7 +59,7 @@ config.mesh_width = mesh_dimensions[0]
 print("View factor...")
 fname_vf = "ViewFactor/" + "vf_" + '_'.join(site.split(' ')) + "_{}M".format(resolution)
 
-#vf = viewfactor.calc_viewfactor(fname_mesh, fname_vf)
+vf = viewfactor.calc_viewfactor(fname_mesh, fname_vf)
 #vf = load_npz(fname_vf + ".npz")
 
 #print("View factor matrix sparsity: ", viewfactor.sparsity(vf))

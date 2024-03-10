@@ -17,7 +17,7 @@ spice.furnsh("kernels/kernels.tm")
 #import pyembree
 #import trimesh 
 #m = trimesh.creation.icosphere()
-#print(m.ray)
+#print(m.ray)       # If "<trimesh.ray.ray_pyembree.RayMeshIntersector at 0x7f8a8fc6e668>", embree is successfully installed
 #sys.exit()
 
 def calculate_A0(planet, lon, lat):
@@ -95,25 +95,14 @@ def photoRender(mesh, planet, center_lon, center_lat, incidence, normals, direct
 
 
     I_photo = I * np.pi * visible
-    
-    #focal_dist = 1000.0
-    #offset = 100.0
-    #camera_height = 25.0
-    #camera_position = (center[0] - vec2pole[0]*offset, center[1] - vec2pole[1]*offset, center[2] + camera_height)
-    #closest_facet = mesh.points[mesh.find_closest_point(camera_position)]
-    #camera_position = (closest_facet[0], closest_facet[1], closest_facet[2] + camera_height)
-    #focal_point = (center[0] + vec2pole[0]*focal_dist, center[1] + vec2pole[1]*focal_dist, center[2])
-    #view_up = (0.0, 0.0, 1.0)
 
     mesh.cell_data["I"] = I_photo
     plotter = pv.Plotter()
     plotter.add_mesh(mesh, scalars="I", cmap="gist_gray")
     plotter.remove_scalar_bar()
-    #plotter.camera_position = [camera_position, focal_point, view_up]
     plotter.view_xy()
     plotter.show()
-    #plotter.screenshot("viper_landing_illum2.png")
-
+    #plotter.screenshot("illum.png")
 
     return 
 
@@ -300,12 +289,7 @@ def run_illumination_timestep(N_CELLS, TARGET_FACETS, normals, origins, intersec
 
         illuminating_disc_visibility[illuminating_disc_visibility == 1] = 0       # Trimesh produces some erroneous results when rays hit seam between facets. Require multiple visible solar disc facets for a terrain facet to be considered illuminated.
 
-        # ---------------------------------------------------------------------------- #
-        #                Convert target disc visiblity to incident flux                #
-        # ---------------------------------------------------------------------------- #
-
         # Flux is proportional to the disk fraction and direction cosine, so store these quantities
-
         # Calculate cosine incidence angle relative to the center of the illuminating disc
         directions = illuminating_disc_center - origins # vector from mesh cells to target
         directions /= np.sqrt(np.einsum('...i,...i', directions, directions))[:,None]    # Normalize direction vectors
