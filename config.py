@@ -17,7 +17,6 @@ sigma_sb = sigma_sb.value
 # ---------------------------------------------------------------------------- #
 #                                     Mesh                                     #
 # ---------------------------------------------------------------------------- #
-fname_mesh = None       # Specify a filename to directly load mesh (rather than compute a new one each time)
 
 
 # ---------------------------------------------------------------------------- #
@@ -33,7 +32,7 @@ abcorr = "CN+S"     # or "LT+S"
 #                                  Raytracing                                  #
 # ---------------------------------------------------------------------------- #
 TARGET_FACETS = 16
-disk_distance_ratio = 100.0     # Place illuminating disc at disk_distance_ratio * mesh_width to avoid over/underflow errors
+disk_distance_ratio = 10.0     # Place illuminating disc at disk_distance_ratio * mesh_width to avoid over/underflow errors
 
 
 # ---------------------------------------------------------------------------- #

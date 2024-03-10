@@ -1,0 +1,12 @@
+astropy
+joblib
+matplotlib
+numba
+numpy
+Pillow 
+pyembree
+pyvista 
+spiceypy
+scipy 
+tqdm
+trimesh

@@ -35,13 +35,75 @@ Earth phases
 
 
 ## Setup
-After cloning the repository, create the following directories within *heat3d*.
+After cloning the repository, the following files should be downloaded and placed inthe corresponding directories contained within *heat3d*.
 
 ### Albedo
-Contains LOLA Albedo maps, accessible at https://imbrium.mit.edu/BROWSE/LOLA_GDR/ALBEDO/
+Contains LOLA Albedo maps, accessible at https://imbrium.mit.edu/BROWSE/LOLA_GDR/ALBEDO/.
 
 ldam_10_float.img
 
 ldam_50n_1000m_float.img
 
 ldam_50s_1000m_float.img
+
+### Illumination
+Illumination files will be stored here.
+
+### kernels
+SPICE kernels will be stored here. 
+
+There should be a metakernel file, *kernels.tm* which contains the following:
+    
+\begindata
+
+KERNELS_TO_LOAD = ( 'kernels/de440.bsp',
+
+					'kernels/latest_leapseconds.tls',
+
+					'kernels/moon_080317.tf',
+
+					'kernels/moon_assoc_me.tf',
+
+					'kernels/moon_assoc_pa.tf',
+
+					'kernels/moon_de440_220930.tf',
+
+					'kernels/moon_pa_de440_200625.bpc',
+
+					'kernels/moon_pa_de440_200625.cmt',
+
+					'kernels/naif0012.tls',
+
+					'kernels/pck00011.tpc',
+
+					)
+
+\begintext
+    
+### Mesh
+Mesh files will be stored here (.ply). User-provided mesh files can also be stored here and accessed directly from heat3d.py.
+
+
+### Plots 
+Optional visualization files can be saved here. 
+
+
+### ViewFactor
+View factor matrices will be stored here. Since these matrices are typically highly sparse for typical convex planetary surfaces,
+view factors are stored as a sparse CSR matrix.
+
+
+### Required modules
+heat3d requires a number of modules, which can be found in the *requirements.txt* file. Note that embree/pyembree is not strictly required,
+but will drastically speed up the raytracing components of the model.
+
+
+## Quick Start
+
+The main model file is heat3d.py. Running the file executes the following basic example:
+
+1.  Create a mesh of Shackleton Crater
+
+2.  Compute the view factor matrix
+
+3.  Determine direct and secondary illumination over a period of one Earth year.

@@ -3,14 +3,14 @@ import spiceypy as spice
 import pyvista as pv 
 from tqdm import tqdm 
 import sys 
-import funcs
 import trimesh
 from math import sin, cos
 import config 
-from joblib import Parallel, delayed, cpu_count
-from time import time 
-import matplotlib.pyplot as plt 
+from joblib import Parallel, delayed
 from numba import njit
+import pyembree 
+
+import funcs
 
 spice.furnsh("kernels/kernels.tm")
 
@@ -19,9 +19,6 @@ spice.furnsh("kernels/kernels.tm")
 #m = trimesh.creation.icosphere()
 #print(m.ray)
 #sys.exit()
-
-
-
 
 def calculate_A0(planet, lon, lat):
     # Use LOLA reflectance-derived albedo for the Moon, otherwise use Bond albedo specified in planets.py
@@ -49,7 +46,6 @@ def calculate_A0(planet, lon, lat):
     return A0
 
 
-@njit(fastmath=True)
 def calcAlbedo(A0, incidence):
     """Calculate the variable albedo [from Feng+ (2020)]
     
@@ -120,39 +116,6 @@ def photoRender(mesh, planet, center_lon, center_lat, incidence, normals, direct
 
 
     return 
-
-
-def targetPoly(azimuth, inclination, dist, radius, num_facets, P):
-    '''
-
-    Parameters
-    ----------
-    azimuth : float
-        Solar azimuth angle [rad]
-    elevation : float
-        Solar elevation angle [rad]
-    dist : float
-        Solar distance [m]
-    P : float array (1x3)
-        Point of interest on mesh
-
-    Returns
-    -------
-    poly : pyvista PolyData
-        Polygon representing solar disk
-
-    '''
-    
-    x = dist * sin(inclination) * cos(azimuth) + P[0]
-    y = dist * sin(inclination) * sin(azimuth) + P[1]
-    z = dist * cos(inclination) + P[2]
-
-    v = [x,y,z] - P
-    vnorm = v/np.linalg.norm(v)
-
-    poly = pv.Polygon(center=[x,y,z], radius=radius, normal=vnorm, n_sides=num_facets)
-    
-    return poly.extract_cells(0)
 
 
 def calcTargetPosition(et, target, obspos, planet):
@@ -240,15 +203,15 @@ def getTargetArrays(planet, obspos, az_offset, target, target_radius_m, target_d
     nsteps                          I   Number of timesteps
     
 
-    target_polygon_distance_arr     F   Distance between observer and target polygon. Scaled to arbitary distance to avoid over/underflow errors in raytracing model
-    target_polygon_radius_arr       F   Apparent radius of target polygon. Scaled to arbitary distance to avoid over/underflow errors in raytracing model
+    polygon_distance_arr            F   Distance between observer and target polygon. Scaled to arbitary distance to avoid over/underflow errors in raytracing model
+    polygon_radius_arr              F   Apparent radius of target polygon. Scaled to arbitary distance to avoid over/underflow errors in raytracing model
     azimuth_arr                     F   Target azimuth angle. Measured in pyvista coordinate system (0 pointing in the positive x-direction, increasing counterclockwise)    [rad]
     incidence_arr                   F   Target incidence angle    [rad]
     squared_distance_arr            F   Squared ratio of target distance to "nominal" distance at which flux density is referenced (used in incident flux calculation)
     """
 
-    target_polygon_distance_arr = np.zeros(nsteps)
-    target_polygon_radius_arr = np.zeros(nsteps)
+    polygon_distance_arr = np.zeros(nsteps)
+    polygon_radius_arr = np.zeros(nsteps)
     azimuth_arr = np.zeros(nsteps)
     incidence_arr = np.zeros(nsteps)
     squared_distance_arr = np.zeros(nsteps)
@@ -266,13 +229,32 @@ def getTargetArrays(planet, obspos, az_offset, target, target_radius_m, target_d
         azimuth = az_offset - az                                            # target azimuth angle in pyvista frame [rad]
         inclination = np.pi/2.0 - el                                        # target inclination angle [rad]
 
-        target_polygon_distance_arr[time_ind] = TARGET_DISTANCE
-        target_polygon_radius_arr[time_ind] = TARGET_RADIUS
+        polygon_distance_arr[time_ind] = TARGET_DISTANCE
+        polygon_radius_arr[time_ind] = TARGET_RADIUS
         azimuth_arr[time_ind] = azimuth
         incidence_arr[time_ind] = inclination
         squared_distance_arr[time_ind] = (r / target_distance_m)**2 
 
-    return target_polygon_distance_arr, target_polygon_radius_arr, azimuth_arr, incidence_arr, squared_distance_arr
+    return polygon_distance_arr, polygon_radius_arr, azimuth_arr, incidence_arr, squared_distance_arr
+
+
+def calcIlluminatingDiscPolyPoints(P, target_polygon_distance_arr, target_polygon_radius_arr, target_azimuth_arr, target_inclination_arr, nsteps):
+
+    pos_target = np.zeros((nsteps, 3))
+    pos_target[:, 0] = target_polygon_distance_arr * np.sin(target_inclination_arr) * np.cos(target_azimuth_arr) + P[0]
+    pos_target[:, 1] = target_polygon_distance_arr * np.sin(target_inclination_arr) * np.sin(target_azimuth_arr) + P[1]
+    pos_target[:, 2] = target_polygon_distance_arr * np.cos(target_inclination_arr) + P[2]
+
+    v_target = pos_target - P 
+    v_target /= np.sqrt(np.einsum('...i,...i', v_target, v_target))[:,None]    # Normalize vectors from P to target disc center
+
+    illuminatingDiscPoints = np.zeros((config.TARGET_FACETS, 3, nsteps))
+    
+    for time_ind in range(nsteps):
+        disc = pv.Polygon(center=[pos_target[time_ind,0], pos_target[time_ind,1], pos_target[time_ind,2]], radius=target_polygon_radius_arr[time_ind], normal=v_target[time_ind], n_sides=config.TARGET_FACETS).extract_cells(0)
+        illuminatingDiscPoints[:, :, time_ind] = disc.points
+
+    return illuminatingDiscPoints, pos_target
 
 
 def loadRayTracer(fname_mesh):
@@ -286,18 +268,72 @@ def loadRayTracer(fname_mesh):
     return intersector, normals, origins
 
 
-@njit(fastmath=False)
-def illuminationFromVisibility(target_disc_visibility, cosine_target, squared_target_distance, S_target):
-    
-    # Flux is proportional to the disk fraction and direction cosine
-    cosdir = 0.5 * (cosine_target + np.abs(cosine_target))
-    incidence_angle = np.arccos(cosdir)
+def run_illumination_timestep(N_CELLS, TARGET_FACETS, normals, origins, intersector, illuminating_disc, illuminating_disc_center):
 
-    theta = config.TWO_PI * target_disc_visibility / config.TARGET_FACETS
-    frac = (theta - np.sin(theta)) / config.TWO_PI
-    illum = frac * cosdir * (squared_target_distance * S_target) # Incident solar flux [W.m-2]
+        # ---------------------------------------------------------------------------- #
+        #                            Calculate illumination at timestep                #
+        # ---------------------------------------------------------------------------- #
+        vis_frac_factor = 2.0*np.pi / TARGET_FACETS 
+        inv_two_pi = 1.0 / (2.0*np.pi)
 
-    return illum, incidence_angle
+        illuminating_disc_visibility = np.zeros(N_CELLS)     # Visibility mask (number of target disc facets visible)
+
+        # Calculate visibility for each observer mesh facet that is facing the target disc
+        for target_ind in range(TARGET_FACETS):
+            endpoint = illuminating_disc[target_ind]   # Origin of rays at each facet, endpoint at current target disc facet
+            
+            directions = endpoint - origins # vector from mesh cells to target
+            directions /= np.sqrt(np.einsum('...i,...i', directions, directions))[:,None]    # Normalize direction vectors
+
+            cosine = np.einsum('ij,ij->i', normals, directions).T    # Cosine of angle between cell normal and target disc point
+
+            ind_toward = np.where(cosine>0)[0]      # Only do raytracing for facets that are oriented towards the target disc facet (cos(i) > 0)
+
+            if len(ind_toward) > 0:
+                hits = intersector.intersects_any(origins[ind_toward], directions[ind_toward])      # Raytracing
+
+                # Identify facets where hits == False, i.e., where the ray does not intersect the mesh anywhere between the mesh facet and the target disc
+                target_visible = ind_toward[~hits]
+
+                illuminating_disc_visibility[target_visible] += 1     # Increment disc visibility by 1 for those cells where disc facet is visible
+
+
+        illuminating_disc_visibility[illuminating_disc_visibility == 1] = 0       # Trimesh produces some erroneous results when rays hit seam between facets. Require multiple visible solar disc facets for a terrain facet to be considered illuminated.
+
+        # ---------------------------------------------------------------------------- #
+        #                Convert target disc visiblity to incident flux                #
+        # ---------------------------------------------------------------------------- #
+
+        # Flux is proportional to the disk fraction and direction cosine, so store these quantities
+
+        # Calculate cosine incidence angle relative to the center of the illuminating disc
+        directions = illuminating_disc_center - origins # vector from mesh cells to target
+        directions /= np.sqrt(np.einsum('...i,...i', directions, directions))[:,None]    # Normalize direction vectors
+        cosine_target = np.einsum('ij,ij->i', normals, directions).T    # Cosine of angle between cell normal and target disc point
+
+        cosine_incidence_angle_timestep = 0.5 * (cosine_target + np.abs(cosine_target))      # Cosine incidence angle
+        theta = vis_frac_factor * illuminating_disc_visibility      # Fraction of target disc visible from each facet
+        fraction_visible_timestep = (theta - np.sin(theta)) * inv_two_pi
+
+        # ---------------------------------------------------------------------------- #
+        #                              Optional: Plotting                              #
+        # ---------------------------------------------------------------------------- #
+        
+        """
+        #I_photo = photoRender(mesh, planet, center_lon, center_lat, incidence_angle_timestep, normals, directions, target_disc_visibility, illumination_timestep, vec2pole, function="L-S")
+
+        mesh.cell_data["I"] = illumination_timestep
+        plotter = pv.Plotter()
+        plotter.add_mesh(mesh, scalars="I", cmap="gist_gray")
+        #plotter.add_mesh(illuminating_disc)
+        plotter.view_xy()
+        plotter.remove_scalar_bar()
+        plotter.show()
+        sys.exit()
+        """
+        
+        # Return fraction of disc visible and cosine of incidence angle
+        return fraction_visible_timestep, cosine_incidence_angle_timestep
 
 
 def calc_illumination_par(mesh, center_lon, center_lat, vec2pole, N_CELLS, et_start, dt, nsteps, planet, target, fname_mesh):
@@ -334,86 +370,33 @@ def calc_illumination_par(mesh, center_lon, center_lat, vec2pole, N_CELLS, et_st
     # ---------------------------------------------------------------------------- #
     #                        Precompute target disc position                       #
     # ---------------------------------------------------------------------------- #
-    target_polygon_distance_arr, target_polygon_radius_arr, azimuth_arr, incidence_arr, squared_distance_arr = getTargetArrays(planet, obspos, az_offset, target, target_radius_m, target_distance_m, et_start, dt, nsteps)
+    target_polygon_distance_arr, target_polygon_radius_arr, target_azimuth_arr, target_inclination_arr, squared_target_distance_arr = getTargetArrays(planet, obspos, az_offset, target, target_radius_m, target_distance_m, et_start, dt, nsteps)
 
-    # ---------------------------------------------------------------------------- #
-    #                Core illumination function for single timestep                #
-    # ---------------------------------------------------------------------------- #
-    def run_illumination_timestep(time_ind):
-        # ---------------------------------------------------------------------------- #
-        #              Create target mesh at position of disc at timestep              #
-        # ---------------------------------------------------------------------------- #
-        solar_disc = targetPoly(azimuth_arr[time_ind], incidence_arr[time_ind], target_polygon_distance_arr[time_ind], target_polygon_radius_arr[time_ind], config.TARGET_FACETS, P)
-
-        # ---------------------------------------------------------------------------- #
-        #                            Calculate illumination                            #
-        # ---------------------------------------------------------------------------- #
-        
-        target_disc_visibility = np.zeros(N_CELLS, dtype=float)     # Visibility mask (number of target disc facets visible)
-        cosine_arr = np.zeros((N_CELLS, config.TARGET_FACETS))      # Cosine of target incidence angle
-
-        # Calculate visibility for each observer mesh facet that is facing the target disc
-        for target_ind in range(config.TARGET_FACETS):
-
-            endpoint = np.array(solar_disc.points[target_ind])   # Origin of rays at each facet, endpoint at current target disc facet
-
-            directions = endpoint - origins # vector from mesh cells to target
-            directions /= np.sqrt(np.einsum('...i,...i', directions, directions))[:,None]    # Normalize direction vectors
-
-            cosine = np.einsum('ij,ij->i', normals, directions).T    # Cosine of angle between cell normal and target disc point
-
-            cosine_arr[:, target_ind] = cosine
-            ind_toward = np.where(cosine>0)[0]      # Only do raytracing for facets that are oriented towards the target disc facet (cos(i) > 0)
-
-            if len(ind_toward) > 0:
-                hits = intersector.intersects_any(origins[ind_toward], directions[ind_toward])      # Raytracing
-                
-                # Identify facets where hits == False, i.e., where the ray does not intersect anything between the mesh facet and the target disc
-                target_visible = ind_toward[hits == False]
-
-                target_disc_visibility[target_visible] += 1     # Increment disc visibility by 1 for those cells where disc facet is visible
-            
-
-        target_disc_visibility[target_disc_visibility == 1] = 0       # Trimesh produces some erroneous results when rays hit seam between facets. Require multiple visible solar disc facets for a terrain facet to be considered illuminated.
-        cosine_target = np.mean(cosine_arr, axis=1)         # Average cosine of target incidence angle over all target disc facets. Used to calculate variable albedo of surface.
-
-        # ---------------------------------------------------------------------------- #
-        #                Convert target disc visiblity to incident flux                #
-        # ---------------------------------------------------------------------------- #
-        illumination_timestep, incidence_angle_timestep = illuminationFromVisibility(target_disc_visibility, cosine_target, squared_distance_arr[time_ind], S_target)
-        
-    
-        # ---------------------------------------------------------------------------- #
-        #                              Optional: Plotting                              #
-        # ---------------------------------------------------------------------------- #
-        
-        """
-        #I_photo = photoRender(mesh, planet, center_lon, center_lat, incidence_angle_timestep, normals, directions, target_disc_visibility, illumination_timestep, vec2pole, function="L-S")
-
-        mesh.cell_data["I"] = illumination_timestep
-        plotter = pv.Plotter()
-        plotter.add_mesh(mesh, scalars="I", cmap="gist_gray")
-        #plotter.add_mesh(solar_disc)
-        plotter.view_xy()
-        plotter.remove_scalar_bar()
-        plotter.show()
-        sys.exit()
-        """        
-        
-        return illumination_timestep, incidence_angle_timestep
+    illuminatingDiscPoints, illuminatingDiscCenter = calcIlluminatingDiscPolyPoints(P, target_polygon_distance_arr, target_polygon_radius_arr, target_azimuth_arr, target_inclination_arr, nsteps)
 
     # ---------------------------------------------------------------------------- #
     #                     Run timestep illumination in parallel                    #
     # ---------------------------------------------------------------------------- #
-    #run_illumination_timestep(1)
+    #run_illumination_timestep(N_CELLS, config.TARGET_FACETS, normals, origins, intersector, illuminatingDiscPoints[:,:,0], illuminatingDiscCenter[0, :])
+    #sys.exit()
 
-    illumination_timestep, incidence_timestep = zip(*Parallel(n_jobs=cpu_count())(delayed(run_illumination_timestep)(time_ind) for time_ind in tqdm(range(nsteps))))
+    fraction_visible_timestep, cosine_incidence_timestep = zip(*Parallel(n_jobs=-1)(delayed(run_illumination_timestep)(N_CELLS, config.TARGET_FACETS, normals, origins, intersector, illuminatingDiscPoints[:,:,time_ind], illuminatingDiscCenter[time_ind, :]) for time_ind in tqdm(range(nsteps))))
 
     # ---------------------------------------------------------------------------- #
     #                                    Output                                    #
     # ---------------------------------------------------------------------------- #
-    illumination = np.vstack(illumination_timestep).T
-    incidence_angle = np.vstack(incidence_timestep).T
+
+    illumination = np.zeros((N_CELLS, nsteps))
+    cosine_incidence_angle = np.zeros((N_CELLS, nsteps))
+
+    for time_ind in range(nsteps):
+        cosi = cosine_incidence_timestep[time_ind]
+        cosine_incidence_angle[:, time_ind] = cosi
+
+        # Convert fraction of disc visible into incident flux in [W.m-2]
+        illumination[:, time_ind] = fraction_visible_timestep[time_ind] * cosi * squared_target_distance_arr[time_ind] * S_target
+
+    incidence_angle = np.arccos(cosine_incidence_angle)
 
     return illumination, incidence_angle
 
@@ -452,7 +435,7 @@ def calcDirectPlusScatteredIllumination(Q_incident, incidence_angle, N_CELLS, ns
 
     A0 = calculate_A0(planet, center_lon, center_lat)
 
-    Q_direct_out, Q_scattered_out = zip(*Parallel(n_jobs=cpu_count())(delayed(calc_flux_t)(vf, A0, Q_incident[:, time_ind], incidence_angle[:, time_ind]) for time_ind in tqdm(range(nsteps))))
+    Q_direct_out, Q_scattered_out = zip(*Parallel(n_jobs=-1)(delayed(calc_flux_t)(vf, A0, Q_incident[:, time_ind], incidence_angle[:, time_ind]) for time_ind in tqdm(range(nsteps))))
 
     Q_direct = np.zeros((N_CELLS, nsteps))
     Q_scattered = np.zeros((N_CELLS, nsteps))
@@ -472,7 +455,7 @@ def calcThermalRadiation(N_CELLS, nsteps, planet, vf, surface_temperature):
 
     emissivity = planet.emissivity 
 
-    Q_thermal_out = zip(*Parallel(n_jobs=cpu_count())(delayed(calc_thermal_t)(vf, surface_temperature[:, time_ind], emissivity) for time_ind in tqdm(range(nsteps))))
+    Q_thermal_out = zip(*Parallel(n_jobs=-1)(delayed(calc_thermal_t)(vf, surface_temperature[:, time_ind], emissivity) for time_ind in tqdm(range(nsteps))))
 
     Q_thermal = np.zeros((N_CELLS, nsteps))
     for time_ind in range(nsteps):
