@@ -28,36 +28,28 @@ The model is capable of handling direct illumination (from multiple sources e.g.
 Illuminating bodies are modeled as polygons and SPICE is used to determine the position of the polygon relative to the mesh as a function of time. At a given timestep, illumination is determined by raytracing from every facet on the mesh to every facet on the illuminating body polygon (fractional illumination is possible)
 
 
-TO DO:
-limb darkening
-
-Earth phases
+TO DO: limb darkening, Earth phases
 
 
 ## Setup
-After cloning the repository, the following files should be downloaded and placed inthe corresponding directories contained within *heat3d*.
+After cloning the repository, the following files should be downloaded and placed in the corresponding directories contained within *heat3d*.
 
 ### Albedo
 Contains LOLA Albedo maps, accessible at https://imbrium.mit.edu/BROWSE/LOLA_GDR/ALBEDO/.
 
-ldam_10_float.img
-
-ldam_50n_1000m_float.img
-
-ldam_50s_1000m_float.img
-
 ### Illumination
-Illumination files will be stored here.
+Illumination files produced by the model will be stored here.
 
 ### kernels
-SPICE kernels will be stored here. 
+Contains SPICE kernels for calculating position of illuminating bodies.
 
 There should be a metakernel file, *kernels.tm* which contains the following:
 
 ```
 \begindata
 
-KERNELS_TO_LOAD = ( 'kernels/de440.bsp',
+KERNELS_TO_LOAD = ( 
+                    'kernels/de440.bsp',
 
 					'kernels/latest_leapseconds.tls',
 
@@ -83,7 +75,8 @@ KERNELS_TO_LOAD = ( 'kernels/de440.bsp',
 ```
 
 ### Mesh
-Mesh files will be stored here (.ply). User-provided mesh files can also be stored here and accessed directly from heat3d.py.
+Mesh files produced by the model will be stored here (.ply), so that the mesh doesn't have to be re-triangulated each time the model is run.
+User-provided mesh files can also be stored here and accessed directly from heat3d.py.
 
 
 ### Plots 
