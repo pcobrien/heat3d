@@ -89,6 +89,8 @@ Mesh files will be stored here (.ply). User-provided mesh files can also be stor
 ### Plots 
 Optional visualization files can be saved here. 
 
+### Topo
+Digital elevation models are stored here, if creating meshes from scratch. For the Moon, LOLA DEMs can be accessed at https://imbrium.mit.edu/BROWSE/LOLA_GDR/. 
 
 ### ViewFactor
 View factor matrices will be stored here. Since these matrices are typically highly sparse for typical convex planetary surfaces,
