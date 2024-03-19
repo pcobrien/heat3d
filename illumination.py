@@ -9,6 +9,7 @@ import config
 from joblib import Parallel, delayed
 from numba import njit
 import pyembree 
+import matplotlib.pyplot as plt 
 
 import funcs
 
@@ -125,10 +126,14 @@ def calcTargetPosition(et, target, obspos, planet):
 
     state, _ = spice.azlcpo(config.method, target, et, config.abcorr, config.azccw, config.elplsz, obspos, planet.obsctr, planet.obsref)
 
+
     # Azimuth and elevation angles
     r = state[0] * 1000.0  # Target position [m]
     az = state[1]
     el = state[2]
+
+    target = "SUN"
+
 
     return [r, el, az]
 
@@ -303,18 +308,8 @@ def run_illumination_timestep(N_CELLS, TARGET_FACETS, normals, origins, intersec
         #                              Optional: Plotting                              #
         # ---------------------------------------------------------------------------- #
         
-        """
+        
         #I_photo = photoRender(mesh, planet, center_lon, center_lat, incidence_angle_timestep, normals, directions, target_disc_visibility, illumination_timestep, vec2pole, function="L-S")
-
-        mesh.cell_data["I"] = illumination_timestep
-        plotter = pv.Plotter()
-        plotter.add_mesh(mesh, scalars="I", cmap="gist_gray")
-        #plotter.add_mesh(illuminating_disc)
-        plotter.view_xy()
-        plotter.remove_scalar_bar()
-        plotter.show()
-        sys.exit()
-        """
         
         # Return fraction of disc visible and cosine of incidence angle
         return fraction_visible_timestep, cosine_incidence_angle_timestep
@@ -356,13 +351,33 @@ def calc_illumination_par(mesh, center_lon, center_lat, vec2pole, N_CELLS, et_st
     # ---------------------------------------------------------------------------- #
     target_polygon_distance_arr, target_polygon_radius_arr, target_azimuth_arr, target_inclination_arr, squared_target_distance_arr = getTargetArrays(planet, obspos, az_offset, target, target_radius_m, target_distance_m, et_start, dt, nsteps)
 
+    plt.figure()
+    plt.plot(target_inclination_arr)
+    plt.show()
+    sys.exit()
+    
     illuminatingDiscPoints, illuminatingDiscCenter = calcIlluminatingDiscPolyPoints(P, target_polygon_distance_arr, target_polygon_radius_arr, target_azimuth_arr, target_inclination_arr, nsteps)
 
     # ---------------------------------------------------------------------------- #
     #                     Run timestep illumination in parallel                    #
     # ---------------------------------------------------------------------------- #
-    #run_illumination_timestep(N_CELLS, config.TARGET_FACETS, normals, origins, intersector, illuminatingDiscPoints[:,:,0], illuminatingDiscCenter[0, :])
+    """
+    time_ind = 0
+    illumination_timestep, _ = run_illumination_timestep(N_CELLS, config.TARGET_FACETS, normals, origins, intersector, illuminatingDiscPoints[:,:,time_ind], illuminatingDiscCenter[time_ind, :])
     #sys.exit()
+    mesh.cell_data["I"] = illumination_timestep
+    plotter = pv.Plotter()
+    plotter.add_mesh(mesh, scalars="I", cmap="gist_gray")
+    pos_target = [illuminatingDiscCenter[time_ind,0], illuminatingDiscCenter[time_ind,1], illuminatingDiscCenter[time_ind,2]]
+    v_target = pos_target - P 
+    v_target = v_target/np.linalg.norm(v_target)
+    illuminating_disc = pv.Polygon(center=pos_target, radius=target_polygon_radius_arr[time_ind], normal=v_target, n_sides=config.TARGET_FACETS).extract_cells(0)
+    plotter.add_mesh(illuminating_disc)
+    plotter.view_xy()
+    plotter.remove_scalar_bar()
+    plotter.show()
+    sys.exit()
+    """
 
     fraction_visible_timestep, cosine_incidence_timestep = zip(*Parallel(n_jobs=-1)(delayed(run_illumination_timestep)(N_CELLS, config.TARGET_FACETS, normals, origins, intersector, illuminatingDiscPoints[:,:,time_ind], illuminatingDiscCenter[time_ind, :]) for time_ind in tqdm(range(nsteps))))
 

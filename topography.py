@@ -71,10 +71,10 @@ def findMeshCenter(mesh):
 
 def plot_mesh(mesh, mesh_center, vec2pole=None):
     # Basic mesh visualization
-    pole = pv.Arrow([mesh_center[0], mesh_center[1], mesh_center[2] + 10000.0], [vec2pole[0], vec2pole[1], 0.0], scale=10000.0)
     plotter = pv.Plotter()
     plotter.add_mesh(mesh)
-    if vec2pole:
+    if vec2pole is not None:
+        pole = pv.Arrow([mesh_center[0], mesh_center[1], mesh_center[2] + 10000.0], [vec2pole[0], vec2pole[1], 0.0], scale=10000.0)
         plotter.add_mesh(pole, color="black")
     plotter.view_xy()
     plotter.show()
@@ -253,16 +253,15 @@ def createMeshfromDEM(site=None, resolution=None, center_lon_deg=None, center_la
 
 def load_mesh(fname_mesh = None, center_lon_deg = None, center_lat_deg = None, site = None, planet = None):
     # Load existing mesh file
-
     if site:
         coords = site_coords[site]
         center_lon_rad = np.deg2rad(coords[0][0])
         center_lat_rad = np.deg2rad(coords[0][1])
-    
-    elif center_lon_deg:
+
+    else:
         center_lon_rad = np.deg2rad(center_lon_deg)
         center_lat_rad = np.deg2rad(center_lat_deg)
-
+    
     mesh = pv.read(fname_mesh)
 
     mesh_center = findMeshCenter(mesh)
